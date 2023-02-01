@@ -1,5 +1,6 @@
 # koishi-plugin-message-logger
 
+[![downloads](https://img.shields.io/npm/dm/koishi-plugin-message-logger?style=flat-square)](https://www.npmjs.com/package/koishi-plugin-message-logger)
 [![npm](https://img.shields.io/npm/v/koishi-plugin-message-logger?style=flat-square)](https://www.npmjs.com/package/koishi-plugin-message-logger)
 
 记录 koishi 机器人收到的消息。
