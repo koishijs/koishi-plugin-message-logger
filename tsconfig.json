@@ -1,7 +1,8 @@
 {
   "compilerOptions": {
-    "rootDir": "src",
+    "baseUrl": ".",
     "outDir": "lib",
+    "rootDir": "src",
     "target": "es2020",
     "module": "commonjs",
     "declaration": true,
@@ -10,8 +11,12 @@
     "skipLibCheck": true,
     "esModuleInterop": true,
     "moduleResolution": "node",
+    "strictBindCallApply": true,
     "jsx": "react-jsx",
     "jsxImportSource": "@satorijs/element",
+    "types": [
+      "yml-register/types",
+    ],
   },
   "include": [
     "src",

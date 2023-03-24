@@ -9,7 +9,7 @@
     "url": "https://github.com/koishijs/koishi-plugin-message-logger/issues"
   },
   "homepage": "https://github.com/koishijs/koishi-plugin-message-logger",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "author": {
@@ -17,6 +17,9 @@
     "name": "Seidko",
     "url": "https://github.com/Seidko"
   },
+  "contributors": [
+    "Shigma <shigma10826@gmail.com>"
+  ],
   "files": [
     "lib",
     "dist"
@@ -30,18 +33,26 @@
     "chatbot",
     "koishi",
     "plugin",
-    "logger"
+    "logger",
+    "message",
+    "record"
   ],
-  "peerDependencies": {
-    "koishi": "^4.11.0"
-  },
-  "devDependencies": {
-    "atsc": "^1.2.2"
-  },
   "koishi": {
     "description": {
       "en": "log koishi bot received messages.",
       "zh": "记录 koishi 机器人收到的消息。"
     }
+  },
+  "devDependencies": {
+    "@types/node": "^18.15.5",
+    "atsc": "^1.2.2",
+    "esbuild": "^0.14.54",
+    "esbuild-register": "^3.4.2",
+    "koishi": "^4.12.1",
+    "typescript": "^4.9.5",
+    "yml-register": "^1.1.0"
+  },
+  "peerDependencies": {
+    "koishi": "^4.10.0"
   }
 }
