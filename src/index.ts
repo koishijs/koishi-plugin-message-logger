@@ -1,21 +1,231 @@
-import { Context, Schema, Logger } from 'koishi'
+import { Bot, Context, Dict, h, Logger, pick, Schema, Session, Time } from 'koishi'
 
-const logger = new Logger('message-logger')
+export interface RefreshConfig {
+  user?: number
+  guild?: number
+  channel?: number
+}
+
+export const RefreshConfig: Schema<RefreshConfig> = Schema.object({
+  user: Schema.natural().role('ms').description('刷新用户数据的时间间隔。').default(Time.hour),
+  guild: Schema.natural().role('ms').description('刷新群组数据的时间间隔。').default(Time.hour),
+  channel: Schema.natural().role('ms').description('刷新频道数据的时间间隔。').default(Time.hour),
+}).description('刷新选项')
+
+export interface Config {
+  logLevel?: number
+  refresh?: RefreshConfig
+}
+
+export const Config: Schema<Config> = Schema.object({
+  logLevel: Schema.natural().max(3).description('输出日志等级。').default(3),
+  refresh: RefreshConfig,
+})
+
+const textSegmentTypes = ['text', 'header', 'section']
+
+const segmentTypes = [
+  'at.all',
+  'at.here',
+  'at.role',
+  'at.user',
+  'share',
+  'contact.friend',
+  'contact.guild',
+  'face',
+  'record',
+  'video',
+  'image',
+  'music',
+  'quote',
+  'forward',
+  'dice',
+  'rps',
+  'poke',
+  'json',
+  'xml',
+  'card',
+] as const
+
+type SegmentType = typeof segmentTypes[number]
+
+function segmentToLocale(session: Session, type: SegmentType, params?: object): string {
+  if (segmentTypes.includes(type)) {
+    return session.text('message.element.' + type, params)
+  }
+
+  return session.text('message.element.unknown')
+}
+
+export interface Message {
+  avatar?: string
+  content?: string
+  abstract?: string
+  username?: string
+  nickname?: string
+  platform?: string
+  messageId?: string
+  userId?: string
+  channelId?: string
+  guildId?: string
+  selfId?: string
+  selfName?: string
+  channelName?: string
+  guildName?: string
+  timestamp?: number
+  quote?: Message
+}
+
+async function getUserName(bot: Bot, guildId: string, userId: string) {
+  try {
+    const { username } = await bot.getGuildMember(guildId, userId)
+    return username
+  } catch {
+    return userId
+  }
+}
+
+async function getGroupName(bot: Bot, guildId: string) {
+  try {
+    const { guildName } = await bot.getGuild(guildId)
+    return guildName
+  } catch {
+    return guildId
+  }
+}
+
+async function getChannelName(bot: Bot, channelId: string, guildId: string) {
+  try {
+    const { channelName } = await bot.getChannel(channelId, guildId)
+    return channelName
+  } catch {
+    return channelId
+  }
+}
 
 export const name = 'message-logger'
 
-export interface Config {}
-export const Config: Schema<Config> = Schema.object({})
+const logger = new Logger('message')
 
-export function apply(ctx: Context) {
-  ctx.middleware(async (session, next) => {
-    if (!session.guildId) logger.info(`收到来自于 ${session.platform} 平台 ${session.username}(${session.userId}) 的私聊消息：${session.content}`)
-    else try {
-      const guild = await session.bot.getGuild(session.guildId)
-      logger.info(`收到来自于 ${session.platform} 平台 ${guild.guildName}(${guild.guildId}) 成员 ${session.username}(${session.userId}) 的群聊消息：${session.content}`)
-    } catch {
-      logger.info(`收到来自于 ${session.platform} 平台 未命名群组(${session.guildId}) 成员 ${session.username}(${session.userId}) 的群聊消息：${session.content}`)
+export function apply(ctx: Context, config: Config) {
+  ctx.i18n.define('zh', require('./locales/zh-CN'))
+
+  const {
+    user: refreshUserName = Time.hour,
+    guild: refreshGroupName = Time.hour,
+    channel: refreshChannelName = Time.hour,
+  } = config.refresh
+
+  logger.level = config.logLevel
+
+  const channelMap: Dict<[Promise<string>, number]> = {}
+  const groupMap: Dict<[Promise<string>, number]> = {}
+  const userMap: Dict<[Promise<string>, number]> = {}
+
+  ctx.on('ready', () => {
+    const timestamp = Date.now()
+    ctx.bots.forEach(bot => userMap[bot.sid] = [Promise.resolve(bot.username), timestamp])
+  })
+
+  async function prepareChannel(session: Session, params: Message, timestamp: number) {
+    const { cid, guildId, channelName } = session
+    if (channelName) {
+      channelMap[cid] = [Promise.resolve(channelName), timestamp]
+      return
     }
-    return next()
-  }, true)
+    if (!guildId) return
+    if (!channelMap[cid] || timestamp - channelMap[cid][1] >= refreshChannelName) {
+      channelMap[cid] = [getChannelName(session.bot, session.channelId, session.guildId), timestamp]
+    }
+    params.channelName = await channelMap[cid][0]
+  }
+
+  async function prepareGroup(session: Session, params: Message, timestamp: number) {
+    const { cid, gid, guildId, guildName } = session
+    if (guildName) {
+      groupMap[gid] = [Promise.resolve(guildName), timestamp]
+      return
+    }
+    if (!guildId || cid === gid) return
+    if (!groupMap[gid] || timestamp - groupMap[gid][1] >= refreshGroupName) {
+      groupMap[gid] = [getGroupName(session.bot, guildId), timestamp]
+    }
+    params.guildName = await groupMap[gid][0]
+  }
+
+  async function prepareAbstract(session: Session, params: Message, timestamp: number) {
+    const stl = segmentToLocale.bind(this, session)
+
+    const codes = h.parse(params.content.split(/\r?\n/, 1)[0])
+    params.abstract = ''
+    for (const code of codes) {
+      if (textSegmentTypes.includes(code.type)) {
+        params.abstract += h.unescape(code.attrs.content)
+      } else if (code.type === 'at') {
+        if (code.attrs.type === 'all') {
+          params.abstract += stl('at.all')
+        } else if (code.attrs.type === 'here') {
+          params.abstract += stl('at.here')
+        } else if (code.attrs.role) {
+          params.abstract += stl('at.role')
+        } else if (session.subtype === 'group') {
+          const id = `${session.platform}:${code.attrs.id}`
+          if (code.attrs.name) {
+            userMap[id] = [Promise.resolve(code.attrs.name), timestamp]
+          } else if (!userMap[id] || timestamp - userMap[id][1] >= refreshUserName) {
+            userMap[id] = [getUserName(session.bot, session.guildId, code.attrs.id), timestamp]
+          }
+          params.abstract += stl('at.user', [(code.attrs.name = await userMap[id][0])])
+        } else {
+          params.abstract += stl('at.user', [session.bot.username])
+        }
+      } else if (code.type === 'share' || code.type === 'location') {
+        params.abstract += stl('share', [code.attrs.title])
+      } else if (code.type === 'contact') {
+        params.abstract += stl(code.attrs.type === 'qq' ? 'contact.friend' : 'contact.guild', [code.attrs.id])
+      } else {
+        params.abstract += `[${stl(code.type as SegmentType)}]`
+      }
+    }
+  }
+
+  async function prepareContent(session: Session, message: Message, timestamp: number) {
+    const tasks = [prepareAbstract(session, message, timestamp)]
+    if ((message.quote = session.quote)) {
+      tasks.push(prepareAbstract(session, message.quote, timestamp))
+    }
+    await Promise.all(tasks)
+  }
+
+  async function handleMessage(session: Session) {
+    const params: Message = pick(session, [
+      'content', 'timestamp', 'messageId', 'platform', 'selfId',
+      'channelId', 'channelName', 'guildId', 'guildName', 'userId',
+    ], true)
+
+    Object.assign(params, pick(session.author, ['username', 'nickname', 'avatar'], true))
+    if (session.type === 'message') {
+      userMap[session.uid] = [Promise.resolve(session.author.username), Date.now()]
+    }
+    const { cid, channelName } = session
+    const timestamp = Date.now()
+    if (channelName) {
+      session.channelName = channelName
+      channelMap[cid] = [Promise.resolve(channelName), timestamp]
+    }
+    params.selfName = session.bot.username
+    await Promise.all([prepareChannel, prepareGroup, prepareContent].map(cb => cb(session, params, timestamp)))
+
+    if (session.subtype !== 'private' && ctx.database) {
+      const channel = await ctx.database.getChannel(session.platform, session.channelId, ['assignee'])
+      if (!channel || channel.assignee !== session.selfId) return
+    }
+
+    // render template with fallback options
+    let templatePath = 'message.log.' + (session.type === 'message' ? 'receive' : 'send')
+    if (!params.channelName) templatePath += '-fallback'
+    logger.debug(session.text(templatePath, params))
+  }
+
+  ctx.any().on('message', handleMessage)
 }
